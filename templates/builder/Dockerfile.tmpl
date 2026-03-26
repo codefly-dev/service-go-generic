@@ -1,0 +1,28 @@
+# Build stage
+FROM golang:{{ .GoVersion }}-alpine AS builder
+
+RUN apk add --no-cache ca-certificates git
+
+WORKDIR /app
+
+COPY code/ ./code/
+WORKDIR /app/code
+RUN go mod download && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-w -s -extldflags "-static"' -o app
+
+# Final stage
+FROM alpine:{{ .AlpineVersion }}
+
+RUN apk add --no-cache ca-certificates
+
+WORKDIR /app
+
+{{ range .Envs }}
+ENV {{ .Key }}={{ .Value }}
+{{ end }}
+
+RUN adduser -D appuser
+COPY --chown=appuser --from=builder /app/code/app .
+USER appuser
+
+EXPOSE 8080
+CMD ["./app"]

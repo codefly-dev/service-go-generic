@@ -1,0 +1,13 @@
+Welcome to the **go-generic** service agent.
+
+Plain Go service — no gRPC, no REST. Use this for Layer 1 dogfooding: any Go project, build and run with `go build` / `go test`.
+
+## What this agent provides
+- Build: `go build`
+- Run: run the binary (optional minimal HTTP health)
+- Test: `go test ./...`
+- Code: LSP (gopls) for ListSymbols
+
+## Production
+- Docker build
+- Kubernetes deployment (optional)
