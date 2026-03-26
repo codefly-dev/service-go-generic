@@ -10,6 +10,7 @@ import (
 	"github.com/codefly-dev/core/agents/services"
 	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
 	configurations "github.com/codefly-dev/core/resources"
+	golanghelpers "github.com/codefly-dev/core/runners/golang"
 	"github.com/codefly-dev/core/shared"
 
 	"google.golang.org/grpc/codes"
@@ -25,25 +26,12 @@ var requirements = builders.NewDependencies(agent.Name,
 )
 
 type Settings struct {
-	HotReload                 bool   `yaml:"hot-reload"`
-	DebugSymbols              bool   `yaml:"debug-symbols"`
-	RaceConditionDetectionRun bool   `yaml:"race-condition-detection-run"`
-	WithCGO                   bool   `yaml:"with-cgo"`
-	WithWorkspace             bool   `yaml:"with-workspace"`
-	SourceDir                 string `yaml:"source-dir"`
+	golanghelpers.GoAgentSettings `yaml:",inline"`
 }
 
-// GoSourceDir returns the configured source directory, defaulting to "code".
-func (s *Settings) GoSourceDir() string {
-	if s.SourceDir != "" {
-		return s.SourceDir
-	}
-	return "code"
-}
-
-const HotReload = "hot-reload"
-const DebugSymbols = "debug-symbols"
-const RaceConditionDetectionRun = "race-condition-detection-run"
+const HotReload = golanghelpers.SettingHotReload
+const DebugSymbols = golanghelpers.SettingDebugSymbols
+const RaceConditionDetectionRun = golanghelpers.SettingRaceConditionDetectionRun
 
 // Service is the go-generic agent service. No gRPC/REST endpoints — plain Go binary for Layer 1 dogfooding.
 type Service struct {
