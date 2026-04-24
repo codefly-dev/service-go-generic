@@ -1,4 +1,4 @@
-package main
+package code
 
 import (
 	"context"
@@ -9,6 +9,9 @@ import (
 	"testing"
 
 	codev0 "github.com/codefly-dev/core/generated/go/codefly/services/code/v0"
+	"github.com/codefly-dev/core/resources"
+
+	goservice "github.com/codefly-dev/service-go/pkg/service"
 )
 
 // newTestCode creates a Code instance pointing at a temporary Go project.
@@ -21,11 +24,11 @@ func newTestCode(t *testing.T) (*Code, string) {
 		t.Fatal(err)
 	}
 
-	svc := NewService()
-	svc.sourceLocation = dir
-	code := NewCode(svc)
-	code.InitServer()
-	return code, dir
+	svc := goservice.New(&resources.Agent{Kind: "codefly:service", Name: "go"})
+	svc.SourceLocation = dir
+	c := New(svc)
+	c.InitServer()
+	return c, dir
 }
 
 func TestFix_GoImports(t *testing.T) {

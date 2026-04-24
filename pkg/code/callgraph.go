@@ -1,13 +1,10 @@
-package main
+package code
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"go/types"
 	"strings"
 
-	codev0 "github.com/codefly-dev/core/generated/go/codefly/services/code/v0"
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/callgraph/vta"
 	"golang.org/x/tools/go/packages"
@@ -42,28 +39,10 @@ type CallGraphResult struct {
 	Error      string           `json:"error,omitempty"`
 }
 
-// handleGetCallGraph runs VTA call graph analysis on the Go module.
-// Called via Execute RPC with operation "get_call_graph".
-func (c *Code) handleGetCallGraph(ctx context.Context, req *codev0.CodeRequest) (*codev0.CodeResponse, error) {
-	c.ensureInit()
-	srcDir := c.sourceDir()
-
-	result := c.computeCallGraph(srcDir)
-
-	data, _ := json.Marshal(result)
-	// Pack JSON result into Fix response Content field (generic string carrier)
-	return &codev0.CodeResponse{
-		Result: &codev0.CodeResponse_Fix{
-			Fix: &codev0.FixResponse{
-				Success: result.Error == "",
-				Content: string(data),
-				Error:   result.Error,
-			},
-		},
-	}, nil
-}
-
-func (c *Code) computeCallGraph(srcDir string) *CallGraphResult {
+// ComputeCallGraph runs VTA call graph analysis on the Go module.
+// Exported so the Tooling layer can invoke it without going through the
+// Code.Execute bus.
+func (c *Code) ComputeCallGraph(srcDir string) *CallGraphResult {
 	result := &CallGraphResult{}
 
 	// 1. Load all packages

@@ -1,0 +1,22 @@
+# Binaries
+service-go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go workspace (keep module-level go.mod pinned)
+go.work
+go.work.sum
+
+# Test binaries
+*.test
+
+# Coverage + cache
+*.out
+*.hash
+
+# Editor
+.idea
+.vscode

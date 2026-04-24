@@ -1,4 +1,9 @@
-package main
+// Package runtime implements the generic Go Runtime gRPC service.
+// Specializations embed *Runtime (Go struct embedding) to inherit the
+// full lifecycle and override only what their layer adds — typically
+// Load (additional endpoint wiring) and Init (REST/gRPC env vars).
+// Test, Lint, Build are reused as-is.
+package runtime
 
 import (
 	"context"
@@ -13,22 +18,33 @@ import (
 
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	golanghelpers "github.com/codefly-dev/core/runners/golang"
+
+	goservice "github.com/codefly-dev/service-go/pkg/service"
 )
 
+// RuntimeImage is the default runtime Docker image. Specializations can
+// override by reassigning before Init if their layer needs a different base.
+var RuntimeImage = &resources.DockerImage{Name: "codeflydev/go", Tag: "0.0.10"}
+
+// Runtime is the generic Go runtime server. Embedded by specializations
+// (go-grpc, …) to inherit the services.Base chain via *goservice.Service
+// and the full lifecycle methods.
 type Runtime struct {
 	services.RuntimeServer
-	*Service
+	*goservice.Service
 
-	runnerEnvironment *golanghelpers.GoRunnerEnvironment
-	cacheLocation     string
-	runner            runners.Proc
-	testProc          runners.Proc
+	// RunnerEnvironment is exported so specializations can reach it for
+	// extra env wiring or port bindings. Nil before Init.
+	RunnerEnvironment *golanghelpers.GoRunnerEnvironment
+
+	cacheLocation string
+	runner        runners.Proc
+	testProc      runners.Proc
 }
 
-func NewRuntime(svc *Service) *Runtime {
-	return &Runtime{
-		Service: svc,
-	}
+// New builds a generic Go Runtime bound to the shared Service.
+func New(svc *goservice.Service) *Runtime {
+	return &Runtime{Service: svc}
 }
 
 func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtimev0.LoadResponse, error) {
@@ -48,13 +64,13 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 
 	// Prefer configured source dir (default: code/).
 	// Fall back to service root if source dir has no go.mod (arbitrary Go project).
-	s.sourceLocation, err = s.LocalDirCreate(ctx, "%s", s.Settings.GoSourceDir())
+	s.Service.SourceLocation, err = s.LocalDirCreate(ctx, "%s", s.Settings.GoSourceDir())
 	if err != nil {
 		return s.Runtime.LoadErrorf(err, "creating source location")
 	}
-	if _, statErr := os.Stat(path.Join(s.sourceLocation, "go.mod")); statErr != nil {
+	if _, statErr := os.Stat(path.Join(s.Service.SourceLocation, "go.mod")); statErr != nil {
 		if _, rootErr := os.Stat(path.Join(s.Location, "go.mod")); rootErr == nil {
-			s.sourceLocation = s.Location
+			s.Service.SourceLocation = s.Location
 		}
 	}
 
@@ -65,7 +81,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 
 	// Optional: load endpoints if service has any (e.g. HTTP health). No gRPC required.
 	s.Endpoints, _ = s.Base.Service.LoadEndpoints(ctx)
-	// Leave GrpcEndpoint/RestEndpoint unset — go-generic has no gRPC
+	// Leave GrpcEndpoint/RestEndpoint unset — go has no gRPC
 
 	return s.Runtime.LoadResponse()
 }
@@ -79,7 +95,7 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 	s.Wool.Trace("creating runner environment", wool.DirField(s.Identity.WorkspacePath))
 
 	cfg := golanghelpers.RunnerConfig{
-		RuntimeImage:   runtimeImage,
+		RuntimeImage:   RuntimeImage,
 		WorkspacePath:  s.Identity.WorkspacePath,
 		RelativeSource: s.Identity.RelativeToWorkspace,
 		UniqueName:     s.UniqueWithWorkspace(),
@@ -105,7 +121,11 @@ func (s *Runtime) CreateRunnerEnvironment(ctx context.Context) error {
 	}
 	env.WithEnvironmentVariables(ctx, allEnvs...)
 
-	s.runnerEnvironment = env
+	s.RunnerEnvironment = env
+	// Expose the underlying RunnerEnvironment on the shared Service so
+	// Code / Tooling / commands route spawns through the same mode —
+	// without reaching into the Go-specific wrapper.
+	s.Service.ActiveEnv = env.Env()
 	return nil
 }
 
@@ -136,16 +156,16 @@ func (s *Runtime) Init(ctx context.Context, req *runtimev0.InitRequest) (*runtim
 		return s.Runtime.InitError(err)
 	}
 
-	// No endpoint env vars — go-generic has no gRPC/REST
+	// No endpoint env vars — go has no gRPC/REST
 
-	if s.runnerEnvironment == nil {
+	if s.RunnerEnvironment == nil {
 		err = s.CreateRunnerEnvironment(ctx)
 		if err != nil {
 			return s.Runtime.InitErrorf(err, "cannot create runner environment")
 		}
 	}
 
-	err = s.runnerEnvironment.Init(ctx)
+	err = s.RunnerEnvironment.Init(ctx)
 	if err != nil {
 		s.Wool.Error("cannot init the go runner", wool.ErrField(err))
 		return s.Runtime.InitError(err)
@@ -167,7 +187,7 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 		}
 	}
 
-	err := s.runnerEnvironment.BuildBinary(ctx)
+	err := s.RunnerEnvironment.BuildBinary(ctx)
 	if err != nil {
 		if !s.Settings.HotReload {
 			return s.Runtime.StartError(err)
@@ -183,7 +203,7 @@ func (s *Runtime) Start(ctx context.Context, req *runtimev0.StartRequest) (*runt
 	}
 	s.EnvironmentVariables.SetFixture(req.Fixture)
 
-	proc, err := s.runnerEnvironment.Runner()
+	proc, err := s.RunnerEnvironment.Runner()
 	if err != nil {
 		return s.Runtime.StartErrorf(err, "getting runner")
 	}
@@ -206,23 +226,19 @@ func (s *Runtime) Build(ctx context.Context, req *runtimev0.BuildRequest) (*runt
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	proc, err := s.runnerEnvironment.Env().NewProcess("go", "build", "./...")
-	if err != nil {
-		return s.Runtime.BuildErrorf(err, "cannot create build proc")
-	}
-	proc.WithOutput(s.Logger)
-	proc.WithDir(s.sourceLocation)
+	s.Infof("running go build")
+
 	envs, err := s.EnvironmentVariables.All()
 	if err != nil {
 		return s.Runtime.BuildErrorf(err, "getting environment variables")
 	}
-	proc.WithEnvironmentVariables(ctx, envs...)
-	s.Infof("running go build")
-	err = proc.Run(s.Wool.Inject(ctx))
-	if err != nil {
-		return s.Runtime.BuildErrorf(err, "build failed")
+
+	opts := golanghelpers.BuildOptions{Target: req.Target}
+	output, runErr := golanghelpers.RunGoBuild(ctx, s.RunnerEnvironment, s.Service.SourceLocation, envs, opts)
+	if runErr != nil {
+		return s.Runtime.BuildErrorf(runErr, "build failed")
 	}
-	return s.Runtime.BuildResponse("")
+	return s.Runtime.BuildResponse(output)
 }
 
 func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtimev0.TestResponse, error) {
@@ -236,7 +252,36 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		return s.Runtime.TestErrorf(err, "getting environment variables")
 	}
 
-	summary, runErr := golanghelpers.RunGoTests(ctx, s.runnerEnvironment, s.sourceLocation, testEnvs)
+	opts := golanghelpers.TestOptions{
+		Target:   req.Target,
+		Verbose:  req.Verbose,
+		Race:     req.Race,
+		Timeout:  req.Timeout,
+		Coverage: req.Coverage,
+		// Stream per-test events through the logger so the CLI TUI can
+		// show real-time progress instead of waiting for the summary.
+		OnEvent: func(ev golanghelpers.TestEvent) {
+			switch ev.Action {
+			case "run":
+				if ev.Test != "" {
+					s.Wool.Forwardf("RUN  %s", ev.Test)
+				}
+			case "pass":
+				if ev.Test != "" {
+					s.Wool.Forwardf("PASS %s (%.2fs)", ev.Test, ev.Elapsed)
+				}
+			case "fail":
+				if ev.Test != "" {
+					s.Wool.Forwardf("FAIL %s (%.2fs)", ev.Test, ev.Elapsed)
+				}
+			case "skip":
+				if ev.Test != "" {
+					s.Wool.Forwardf("SKIP %s", ev.Test)
+				}
+			}
+		},
+	}
+	summary, runErr := golanghelpers.RunGoTests(ctx, s.RunnerEnvironment, s.Service.SourceLocation, testEnvs, opts)
 
 	s.Wool.Forwardf("Tests: %s", summary.SummaryLine())
 	for _, f := range summary.Failures {
@@ -250,23 +295,19 @@ func (s *Runtime) Lint(ctx context.Context, req *runtimev0.LintRequest) (*runtim
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	proc, err := s.runnerEnvironment.Env().NewProcess("go", "vet", "./...")
-	if err != nil {
-		return s.Runtime.LintErrorf(err, "cannot create vet proc")
-	}
-	proc.WithOutput(s.Logger)
-	proc.WithDir(s.sourceLocation)
+	s.Infof("running go vet")
+
 	envs, err := s.EnvironmentVariables.All()
 	if err != nil {
 		return s.Runtime.LintErrorf(err, "getting environment variables")
 	}
-	proc.WithEnvironmentVariables(ctx, envs...)
-	s.Infof("running go vet")
-	err = proc.Run(s.Wool.Inject(ctx))
-	if err != nil {
-		return s.Runtime.LintErrorf(err, "lint failed")
+
+	opts := golanghelpers.LintOptions{Target: req.Target}
+	output, runErr := golanghelpers.RunGoLint(ctx, s.RunnerEnvironment, s.Service.SourceLocation, envs, opts)
+	if runErr != nil {
+		return s.Runtime.LintErrorf(runErr, "lint failed")
 	}
-	return s.Runtime.LintResponse("")
+	return s.Runtime.LintResponse(output)
 }
 
 func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationRequest) (*runtimev0.InformationResponse, error) {
@@ -302,7 +343,7 @@ func (s *Runtime) Destroy(ctx context.Context, req *runtimev0.DestroyRequest) (*
 	ctx = s.Wool.Inject(ctx)
 
 	s.Wool.Trace("destroying service")
-	err := golanghelpers.DestroyGoRuntime(ctx, s.Runtime.RuntimeContext, runtimeImage,
+	err := golanghelpers.DestroyGoRuntime(ctx, s.Runtime.RuntimeContext, RuntimeImage,
 		s.cacheLocation, s.Identity.WorkspacePath,
 		path.Join(s.Identity.RelativeToWorkspace, s.Settings.GoSourceDir()),
 		s.UniqueWithWorkspace())

@@ -1,0 +1,30 @@
+{
+  description = "{{ .Service.Name.DNSCase }} development environment";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  };
+
+  outputs = { self, nixpkgs }:
+    let
+      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f system);
+    in
+    {
+      devShells = forAllSystems (system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          default = pkgs.mkShell {
+            # Generic Go service — no gRPC tools. Specializations like
+            # go-grpc ship their own flake with buf / protoc / grpcurl.
+            packages = [
+              pkgs.go_1_25
+              pkgs.golangci-lint
+              pkgs.delve
+            ];
+          };
+        });
+    };
+}
