@@ -3,7 +3,7 @@ module github.com/codefly-dev/service-go
 go 1.25.0
 
 require (
-	github.com/codefly-dev/core v0.1.144
+	github.com/codefly-dev/core v0.1.155
 	golang.org/x/tools v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
 )
