@@ -245,7 +245,13 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 
-	s.Infof("running go tests")
+	s.Wool.Info("running go tests",
+		wool.Field("target", req.Target),
+		wool.Field("filters", req.Filters),
+		wool.Field("race", req.Race),
+		wool.Field("coverage", req.Coverage),
+		wool.Field("timeout", req.Timeout),
+		wool.Field("extra_args", req.ExtraArgs))
 
 	testEnvs, err := s.EnvironmentVariables.All()
 	if err != nil {
@@ -253,11 +259,13 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	}
 
 	opts := golanghelpers.TestOptions{
-		Target:   req.Target,
-		Verbose:  req.Verbose,
-		Race:     req.Race,
-		Timeout:  req.Timeout,
-		Coverage: req.Coverage,
+		Target:    req.Target,
+		Verbose:   req.Verbose,
+		Race:      req.Race,
+		Timeout:   req.Timeout,
+		Coverage:  req.Coverage,
+		Filters:   req.Filters,
+		ExtraArgs: req.ExtraArgs,
 		// Stream per-test events through the logger so the CLI TUI can
 		// show real-time progress instead of waiting for the summary.
 		OnEvent: func(ev golanghelpers.TestEvent) {
