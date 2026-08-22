@@ -1,11 +1,9 @@
 module github.com/codefly-dev/service-go
 
-go 1.26
-
-toolchain go1.26.5
+go 1.27.0
 
 require (
-	github.com/codefly-dev/core v0.3.6
+	github.com/codefly-dev/core v0.3.8
 	golang.org/x/tools v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 )
